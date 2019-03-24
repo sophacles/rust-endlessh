@@ -1,0 +1,10 @@
+[package]
+name = "sshtarpit"
+version = "0.1.0"
+authors = ["Erich Heine <sophacles@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+tokio = "0.1.18"
+rand = "0.6.5"
+futures= "0.1.25"
