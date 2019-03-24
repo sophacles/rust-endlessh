@@ -4,7 +4,6 @@ extern crate tokio;
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::future::{lazy, loop_fn, Future, Loop};
@@ -13,48 +12,43 @@ use rand::Rng;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::timer::{Delay, Interval};
 
-type Counter = Arc<AtomicUsize>;
-type TarpitState = (TcpStream, Counter);
+static CON: AtomicUsize = AtomicUsize::new(0);
+static DIS: AtomicUsize = AtomicUsize::new(0);
 
 fn main() {
     let addr = "0.0.0.0:22".parse::<SocketAddr>().unwrap();
     let listener = TcpListener::bind(&addr).unwrap();
     let sock_stream = listener.incoming().map_err(|_| ());
 
-    let connects = Arc::new(AtomicUsize::new(0));
-    let disconnects = Arc::new(AtomicUsize::new(0));
-
     tokio::run(lazy(move || {
-        stats_outputter(connects.clone(), disconnects.clone());
+        stats_outputter();
 
         sock_stream.for_each(move |client: TcpStream| {
-            connects.fetch_add(1, Ordering::Relaxed);
-            notify_conn(&client);
-            tarpit((client, disconnects.clone()));
+            tarpit(client);
             Ok(())
         })
     }))
 }
 
-fn stats_outputter(connects: Counter, disconnects: Counter) {
+fn stats_outputter() {
     tokio::spawn(
         Interval::new_interval(Duration::from_secs(15))
             .map_err(|_| println!("Stats timer failed!"))
             .for_each(move |_| {
-                let c = connects.load(Ordering::Relaxed);
-                let d = disconnects.load(Ordering::Relaxed);
+                let c = CON.load(Ordering::Relaxed);
+                let d = DIS.load(Ordering::Relaxed);
                 Ok(println!("\nStats: {} total, {} current\n", c, c - d))
             }),
     );
 }
 
-fn tarpit(s: TarpitState) {
+fn tarpit(client: TcpStream) {
     let timer = Instant::now();
-    tokio::spawn(loop_fn(s, move |(client, disconnects)| {
+    notify_conn(&client);
+    tokio::spawn(loop_fn(client, move |client| {
         slow_data(client).then(move |res| match res {
-            Ok(client) => Ok(Loop::Continue((client, disconnects))),
+            Ok(client) => Ok(Loop::Continue(client)),
             Err(raddr) => {
-                disconnects.fetch_add(1, Ordering::Relaxed);
                 notify_disconn(raddr, timer);
                 Ok(Loop::Break(()))
             }
@@ -78,11 +72,13 @@ fn random_text() -> String {
 }
 
 fn notify_conn(client: &TcpStream) {
+    CON.fetch_add(1, Ordering::Relaxed);
     let raddr = client.peer_addr().unwrap();
     println!("Connection from: {}", raddr);
 }
 
 fn notify_disconn(raddr: SocketAddr, timer: Instant) {
+    DIS.fetch_add(1, Ordering::Relaxed);
     let stop: Duration = Instant::now().duration_since(timer);
     println!("Connection broken: {} (lasted: {}s)", raddr, stop.as_secs());
 }
